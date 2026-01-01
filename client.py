@@ -9,15 +9,7 @@
 2025/10/25 0:09    1.0         去掉类型提示,兼容旧版本python,整合linux和Windows
 """
 
-"""
-最终版 client.py
-整合：
- - Windows + Linux
- - Energy-saving mode（节能模式）
- - Windows 网络性能计数器
-"""
 
-# -*- encoding: utf-8 -*-
 """
 最终版 client.py
 整合：
@@ -27,17 +19,21 @@
   - Linux 过滤虚拟挂载点（snap/dev/shm/run/... 等）
 """
 
+import sys
+from pathlib import Path
 import atexit
 import logging
 import os
 import signal
 import subprocess
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 import platform
 import time
 import json
 import urllib.request
+# import pytz
+# tz = pytz.timezone("Asia/Shanghai")
 
 SYSTEM = platform.system()
 
@@ -55,6 +51,18 @@ logging.basicConfig(
 
 IS_EXITED = False
 
+
+def real_path():
+    # frozen 表示在 PyInstaller 打包环境
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).resolve().parent
+    # 开发环境：返回当前脚本所在目录
+    return Path(__file__).resolve().parent
+
+
+def now_shanghai_str():
+    # 用 UTC + 8 计算“上海时间”
+    return (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
 
 # ============================
 # HTTP POST (标准库实现)
@@ -81,6 +89,7 @@ class ProcessParams:
         self.secret_key = ''
         self.api_address = ''
         self.path = "config.txt"
+        self.real_path = real_path()
 
     @staticmethod
     def open(path):
@@ -96,9 +105,9 @@ class ProcessParams:
         ask_list = ["api_address", "secret_key"]
         result = ""
         for item in ask_list:
-            user_input = input(f"请输入{item}\n")
-            result += f"{item}={user_input}\n"
-        self.write(self.path, result)
+            user_input = input("请输入{}\n".format(item))
+            result += "{}={}\n".format(item, user_input)
+        self.write(os.path.join(self.real_path,self.path), result)
 
     def check_params(self):
         if self.secret_key and self.api_address and self.api_address.startswith("http"):
@@ -108,8 +117,8 @@ class ProcessParams:
         return False
 
     def read_params(self):
-        if os.path.exists(self.path):
-            raw = self.open(self.path)
+        if os.path.exists(os.path.join(self.real_path, self.path)):
+            raw = self.open(os.path.join(self.real_path, self.path))
             for line in raw.splitlines():
                 key, value = line.split("=")
                 if key.strip() == "secret_key":
@@ -176,9 +185,9 @@ class SystemMonitor:
     def change_data_to_human_friendly(data):
         for unit in ["B", "KB", "MB", "GB", "TB"]:
             if data < 1024:
-                return f"{round(data,2)} {unit}"
+                return "{} {}".format(round(data,2), unit)
             data /= 1024
-        return f"{round(data,2)} TB"
+        return "{} TB".format(round(data,2))
 
     @staticmethod
     def change_time_to_human_friendly(seconds):
@@ -195,7 +204,7 @@ class SystemMonitor:
             if seconds >= sec:
                 val = int(seconds // sec)
                 seconds %= sec
-                result.append(f"{val}{name}")
+                result.append("{}{}".format(val,name))
         return " ".join(result) if result else "0s"
 
     @staticmethod
@@ -222,7 +231,7 @@ class SystemMonitor:
                     return lines[1].strip()
             except:
                 pass
-            return f"Windows {platform.release()}"
+            return "Windows {}".format(platform.release())
 
         elif SYSTEM == "Linux":
             try:
@@ -232,9 +241,9 @@ class SystemMonitor:
                         if "=" in line:
                             k, v = line.strip().split("=", 1)
                             info[k] = v.strip('"')
-                return f"{info.get('NAME','Linux')} {info.get('VERSION','')}"
+                return "{} {}".format(info.get('NAME','Linux'), info.get('VERSION',''))
             except:
-                return f"Linux {platform.release()}"
+                return "Linux {}".format(platform.release())
 
         return SYSTEM
 
@@ -411,10 +420,10 @@ class SystemMonitor:
                  self.change_data_to_human_friendly(d[2]), d[3])
                 for d in disks
             ],
-            "sent_speed": f"{sent_speed} KB/s",
-            "recv_speed": f"{recv_speed} KB/s",
+            "sent_speed": "{} KB/s".format(sent_speed),
+            "recv_speed": "{} KB/s".format(recv_speed),
             "uptime": self.change_time_to_human_friendly(uptime),
-            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_update": now_shanghai_str(),
             "secret_key": self.secret_key
         })
 
@@ -508,10 +517,10 @@ class SystemMonitor:
                  self.change_data_to_human_friendly(d[2]), d[3])
                 for d in disks
             ],
-            "sent_speed": f"{sent_speed} KB/s",
-            "recv_speed": f"{recv_speed} KB/s",
+            "sent_speed": "{} KB/s".format(sent_speed),
+            "recv_speed": "{} KB/s".format(recv_speed),
             "uptime": self.change_time_to_human_friendly(uptime),
-            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_update": now_shanghai_str(),
             "secret_key": self.secret_key
         })
 
@@ -520,22 +529,28 @@ class SystemMonitor:
     # ===========================================================
     def update_worker(self):
         while True:
-            if SYSTEM == "Linux":
-                self.update_info_linux()
-            elif SYSTEM == "Windows":
-                self.update_info_windows()
-            http_post(
-                f"{self.api_address}/api/host/update_host_details",
-                data=self.snake_to_small_camel(self.system_info_dict),
-                timeout=10
-            )
-            if self.energy_saving_mode:
-                if SYSTEM == "Windows":
-                    time.sleep(2)
+            try:
+                if SYSTEM == "Linux":
+                    self.update_info_linux()
+                elif SYSTEM == "Windows":
+                    self.update_info_windows()
+                res = json.loads(http_post(
+                    "{}/api/host/update_host_details".format(self.api_address),
+                    data=self.snake_to_small_camel(self.system_info_dict),
+                    timeout=10
+                ))
+                if res["code"] != 200:
+                    logging.error("Failed to update host details: {}".format(res['message']))
+                    os._exit(0)
+                if self.energy_saving_mode:
+                    if SYSTEM == "Windows":
+                        time.sleep(2)
+                    else:
+                        time.sleep(3)
                 else:
-                    time.sleep(3)
-            else:
-                time.sleep(2)
+                    time.sleep(2)
+            except Exception as e:
+                logging.error(e)
 
 
 # ============================
@@ -567,7 +582,7 @@ def main(energy_saving_mode=False):
     while True:
         if IS_EXITED:
             break
-        time.sleep(5)
+        time.sleep(1)
 
 
 if __name__ == '__main__':
