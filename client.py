@@ -20,7 +20,6 @@
 """
 
 import sys
-from pathlib import Path
 import atexit
 import logging
 import os
@@ -53,11 +52,9 @@ IS_EXITED = False
 
 
 def real_path():
-    # frozen 表示在 PyInstaller 打包环境
     if getattr(sys, 'frozen', False):
-        return Path(sys.executable).resolve().parent
-    # 开发环境：返回当前脚本所在目录
-    return Path(__file__).resolve().parent
+        return os.path.dirname(os.path.realpath(sys.executable))
+    return os.path.dirname(os.path.realpath(__file__))
 
 
 def now_shanghai_str():
