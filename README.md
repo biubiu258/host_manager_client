@@ -1,4 +1,9 @@
-
+# 快速安装命令
+```
+curl -fsSL https://raw.githubusercontent.com/biubiu258/host_manager_client/main/install.sh -o install.sh
+chmod +x install.sh
+sudo ./install.sh
+```
 # 🖥️ SystemMonitor 客户端程序
 
 一个跨平台（Windows / Linux / macOS）系统监控客户端，用于实时采集主机 CPU、内存、磁盘、网络等信息，并定时上传到指定 API 服务端。  
